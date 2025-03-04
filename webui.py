@@ -14,6 +14,7 @@
 import os
 import sys
 import argparse
+import shutil
 import gradio as gr
 import numpy as np
 import torch
@@ -33,7 +34,8 @@ instruct_dict = {'预训练音色': '1. 选择预训练音色\n2. 点击生成�
                  '自然语言控制': '1. 选择预训练音色\n2. 输入instruct文本\n3. 点击生成音频按钮'}
 stream_mode_list = [('否', False), ('是', True)]
 max_val = 0.8
-
+lower_sr = 16000
+high_sr = 22050
 
 def generate_seed():
     seed = random.randint(1, 100000000)
@@ -134,6 +136,53 @@ def generate_audio(tts_text, mode_checkbox_group, sft_dropdown, prompt_text, pro
         for i in cosyvoice.inference_instruct(tts_text, sft_dropdown, instruct_text, stream=stream, speed=speed):
             yield (cosyvoice.sample_rate, i['tts_speech'].numpy().flatten())
 
+def save_tone(spk_name):
+    if not spk_name or spk_name == "":
+        gr.Info("音色名称不能为空")
+        return False
+
+    shutil.copyfile(f"{ROOT_DIR}/output.pt",f"{ROOT_DIR}/voices/{spk_name}.pt")
+    gr.Info("音色保存成功,存放位置为voices目录")
+
+def load_spk_from_wav(wav_file, cosyvoice):
+    target_wav, sample_rate = torchaudio.load(wav_file)
+    if target_wav.shape[0] == 2:
+        # 计算两个声道的平均值
+        target_wav = target_wav.mean(dim=0, keepdim=True)
+
+    target_wav_high = torchaudio.transforms.Resample(sample_rate, high_sr)(target_wav)
+    target_wav_high = postprocess(target_wav_high)
+    target_wav_lower = torchaudio.transforms.Resample(high_sr, lower_sr)(target_wav_high)
+
+    speech_feat, speech_feat_len = cosyvoice.frontend._extract_speech_feat(target_wav_high)
+    speech_token, speech_token_len = cosyvoice.frontend._extract_speech_token(target_wav_lower)
+    embedding = cosyvoice.frontend._extract_spk_embedding(target_wav_lower)
+
+    print(f"speech_feat {type(speech_feat)}")
+    print(f"speech_token {type(speech_token)}")    
+    print(f"embedding {type(embedding)}")
+
+    return {
+        "speech_feat": speech_feat,
+        "speech_feat_len": speech_feat_len,
+        "speech_token": speech_token,
+        "speech_token_len": speech_token_len,
+        "embedding": embedding
+    }
+
+def get_sft_spk():
+    sft_spk = cosyvoice.list_available_spks()
+    if len(sft_spk) == 0:
+        sft_spk = ['']
+    for name in os.listdir(f"{ROOT_DIR}/voices"):
+        # print(name.replace(".pt",""))
+        sft_spk.append(name.replace(".pt",""))
+    return sft_spk
+
+def refresh_choices():
+    spk_new = get_sft_spk()
+    
+    return {"choices":spk_new, "__type__": "update"}
 
 def main():
     with gr.Blocks() as demo:
@@ -149,6 +198,8 @@ def main():
             instruction_text = gr.Text(label="操作步骤", value=instruct_dict[inference_mode_list[0]], scale=0.5)
             sft_dropdown = gr.Dropdown(choices=sft_spk, label='选择预训练音色', value=sft_spk[0], scale=0.25)
             stream = gr.Radio(choices=stream_mode_list, label='是否流式推理', value=stream_mode_list[0][1])
+            refresh_new_button = gr.Button("刷新新增音色")
+            refresh_new_button.click(fn=refresh_choices, inputs=[], outputs=[sft_dropdown])
             speed = gr.Number(value=1, label="速度调节(仅支持非流式推理)", minimum=0.5, maximum=2.0, step=0.1)
             with gr.Column(scale=0.25):
                 seed_button = gr.Button(value="\U0001F3B2")
@@ -159,8 +210,10 @@ def main():
             prompt_wav_record = gr.Audio(sources='microphone', type='filepath', label='录制prompt音频文件')
         prompt_text = gr.Textbox(label="输入prompt文本", lines=1, placeholder="请输入prompt文本，需与prompt音频内容一致，暂时不支持自动识别...", value='')
         instruct_text = gr.Textbox(label="输入instruct文本", lines=1, placeholder="请输入instruct文本.", value='')
+        speaker_name = gr.Textbox(label="输入新的音色名称", lines=1, placeholder="请输入新的音色名称.", value='')
 
         generate_button = gr.Button("生成音频")
+        save_tone_button = gr.Button("保存音色模型")
 
         audio_output = gr.Audio(label="合成音频", autoplay=True, streaming=True)
 
@@ -169,6 +222,7 @@ def main():
                               inputs=[tts_text, mode_checkbox_group, sft_dropdown, prompt_text, prompt_wav_upload, prompt_wav_record, instruct_text,
                                       seed, stream, speed],
                               outputs=[audio_output])
+        save_tone_button.click(save_tone, inputs=[speaker_name])
         mode_checkbox_group.change(fn=change_instruction, inputs=[mode_checkbox_group], outputs=[instruction_text])
     demo.queue(max_size=4, default_concurrency_limit=2)
     demo.launch(server_name='0.0.0.0', server_port=args.port)
@@ -192,7 +246,7 @@ if __name__ == '__main__':
         except Exception:
             raise TypeError('no valid model_type!')
 
-    sft_spk = cosyvoice.list_available_spks()
+    sft_spk = get_sft_spk()
     if len(sft_spk) == 0:
         sft_spk = ['']
     prompt_sr = 16000

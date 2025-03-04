@@ -23,6 +23,7 @@ from cosyvoice.cli.model import CosyVoiceModel, CosyVoice2Model
 from cosyvoice.utils.file_utils import logging
 from cosyvoice.utils.class_utils import get_model_type
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class CosyVoice:
 
@@ -65,7 +66,16 @@ class CosyVoice:
 
     def inference_sft(self, tts_text, spk_id, stream=False, speed=1.0, text_frontend=True):
         for i in tqdm(self.frontend.text_normalize(tts_text, split=True, text_frontend=text_frontend)):
-            model_input = self.frontend.frontend_sft(i, spk_id)
+            default_spks = self.list_available_spks()
+            logging.info("默认预训练音色: {}".format(default_spks));
+            if spk_id not in default_spks:
+                logging.info("读取pt {}".format(spk_id))
+                newspk = torch.load(f'{ROOT_DIR}/voices/{spk_id}.pt', map_location=torch.device('cpu'))
+                tts_text_token, tts_text_token_len = self.frontend._extract_text_token(tts_text)
+                model_input = {'text': tts_text_token, 'text_len': tts_text_token_len, 'llm_embedding': newspk["llm_embedding"], 'flow_embedding': newspk["flow_embedding"] }
+            else:
+                model_input = self.frontend.frontend_sft(i, spk_id)
+
             start_time = time.time()
             logging.info('synthesis text {}'.format(i))
             for model_output in self.model.tts(**model_input, stream=stream, speed=speed):
@@ -80,6 +90,8 @@ class CosyVoice:
             if (not isinstance(i, Generator)) and len(i) < 0.5 * len(prompt_text):
                 logging.warning('synthesis text {} too short than prompt text {}, this may lead to bad performance'.format(i, prompt_text))
             model_input = self.frontend.frontend_zero_shot(i, prompt_text, prompt_speech_16k, self.sample_rate)
+            # 保存数据
+            torch.save(model_input, f'{ROOT_DIR}/output.pt') 
             start_time = time.time()
             logging.info('synthesis text {}'.format(i))
             for model_output in self.model.tts(**model_input, stream=stream, speed=speed):
