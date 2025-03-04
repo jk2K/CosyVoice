@@ -235,3 +235,17 @@ You can also scan the QR code to join our official Dingding chat group.
 
 ## Disclaimer
 The content provided above is for academic purposes only and is intended to demonstrate technical capabilities. Some examples are sourced from the internet. If any content infringes on your rights, please contact us to request its removal.
+
+
+## macOS
+安装支持 mps 的 pytorch
+```bash
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cpu --upgrade
+```
+
+解决错误
+```
+Output channels > 65536 not supported at the MPS device
+```
+
+PyTorch version 2.7.0.dev20250303 可用
