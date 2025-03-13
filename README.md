@@ -249,3 +249,10 @@ Output channels > 65536 not supported at the MPS device
 ```
 
 PyTorch version 2.7.0.dev20250303 可用
+
+启动
+```bash
+conda activate cosyvoice
+
+python3 webui.py --port 50000 --model_dir pretrained_models/CosyVoice2-0.5B
+```
